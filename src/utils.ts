@@ -1,5 +1,7 @@
 import type { SQLiteDBCore } from './types'
 import { SQLITE_DETERMINISTIC, SQLITE_DIRECTONLY, SQLITE_UTF8 } from 'wa-sqlite'
+import type { IDBBatchAtomicVFS, IDBMirrorVFS } from './vfs/idb'
+import type { OPFSCoopSyncVFS } from './vfs/opfs'
 
 /**
  * check if IndexedDB and Web Locks API supported
@@ -148,3 +150,27 @@ export function customFunctionCore<N extends string, T extends SQLiteCompatibleT
 ): void {
   return customFunction(core.sqlite, core.db, fnName, fn, options)
 }
+
+
+// export async function exportDbChunk(
+//   vfs: SQLiteVFS,
+//   cb: (chunk: Uint8Array, offset: number, length: number) => void,
+// ): number {
+//   const fileId = vfs.mapIdToFile.keys().next().value;
+//   const dvFileSize = new DataView(new ArrayBuffer(8));
+//   await vfs.xFileSize(fileId, dvFileSize);
+//   const fileSize = Number(fileSize.getBigUint64(0, true));
+//   let iOffset = 0;
+//   let bytesRemaining = Number(fileSize.getBigUint64(0, true));
+//   console.log("fileSize = ", bytesRemaining);
+//   while (bytesRemaining > 0) {
+//     const buffer = new Uint8Array(Math.min(bytesRemaining, 65536));
+//     await vfs.jRead(fileId, buffer, iOffset);
+//     cb(buffer, iOffset, buffer.length);
+
+//     iOffset += buffer.byteLength;
+//     bytesRemaining -= buffer.byteLength;
+//   }
+
+//   return;
+// }
