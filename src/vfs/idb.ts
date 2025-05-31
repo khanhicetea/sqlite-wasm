@@ -1,39 +1,42 @@
-import type { BaseOptions, IDBBatchAtomicVFSOptions, Options } from '../types'
+import type { BaseStorageOptions, IDBBatchAtomicVFSOptions, InitSQLiteOptions } from '../types'
+
 import { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js'
-import { IDBMirrorVFS } from 'wa-sqlite/src/examples/IDBMirrorVFS.js'
+
 import SQLiteAsyncESMFactory from '../../wa-sqlite-fts5/wa-sqlite-async.mjs'
 
 export { IDBBatchAtomicVFS } from 'wa-sqlite/src/examples/IDBBatchAtomicVFS.js'
-export { IDBMirrorVFS } from 'wa-sqlite/src/examples/IDBMirrorVFS.js'
 
 export type IDBVFSOptions = IDBBatchAtomicVFSOptions
 
 /**
- * Store data in IndexedDB,
- * Use `IDBBatchAtomicVFS` with `wa-sqlite-async.wasm` (larger than sync version), better compatibility
+ * Store data in `IndexedDB`,
+ * use `IDBBatchAtomicVFS` with `wa-sqlite-async.wasm`,
+ * larger than sync version, better compatibility
  * @param fileName db file name
  * @param options options
  * @example
  * ```ts
- * import { useIdbStorage } from '@subframe7536/sqlite-wasm/idb'
  * import { initSQLite } from '@subframe7536/sqlite-wasm'
+ * import { useIdbStorage } from '@subframe7536/sqlite-wasm/idb'
  *
- * const url = 'https://cdn.jsdelivr.net/gh/rhashimoto/wa-sqlite@v0.9.9/dist/wa-sqlite-async.wasm'
+ * // optional url
+ * const url = 'https://cdn.jsdelivr.net/npm/@subframe7536/sqlite-wasm@0.5.0/wa-sqlite-async.wasm'
+ * const url1 = 'https://cdn.jsdelivr.net/gh/subframe7536/sqlite-wasm@v0.5.0/wa-sqlite-fts5/wa-sqlite-async.wasm'
  *
- * const { run, changes, lastInsertRowId, close, sqlite, db } = await initSQLite(
+ * const { run, changes, lastInsertRowId, close } = await initSQLite(
  *   useIdbStorage('test.db', { url })
  * )
  * ```
  */
 export async function useIdbStorage(
   fileName: string,
-  options: IDBVFSOptions & BaseOptions = {},
-): Promise<Options> {
+  options: IDBVFSOptions & BaseStorageOptions = {},
+): Promise<InitSQLiteOptions> {
   const {
     url,
     lockPolicy = 'shared+hint',
     lockTimeout = Infinity,
-    readonly,
+    ...rest
   } = options
   const sqliteModule = await SQLiteAsyncESMFactory(
     url ? { locateFile: () => url } : undefined,
@@ -43,46 +46,9 @@ export async function useIdbStorage(
   /// keep-sorted
   return {
     path: idbName,
-    readonly,
-    sqliteModule,
-    vfsFn: IDBMirrorVFS.create,
-    vfsOptions,
-  }
-}
-
-/**
- * Store data in memory and sync to IndexedDB,
- * Use `IDBMirrorVFS` with `wa-sqlite-async.wasm` (larger than sync version), better performance compare to `IDBBatchAtomicVFS`
- * @param fileName db file name
- * @param options options
- * @example
- * ```ts
- * import { useIdbMemoryStorage } from '@subframe7536/sqlite-wasm/idb'
- * import { initSQLite } from '@subframe7536/sqlite-wasm'
- *
- * const url = 'https://cdn.jsdelivr.net/gh/rhashimoto/wa-sqlite@v0.9.9/dist/wa-sqlite-async.wasm'
- *
- * const { run, changes, lastInsertRowId, close, sqlite, db } = await initSQLite(
- *   useIdbMemoryStorage('test.db', { url })
- * )
- * ```
- */
-export async function useIdbMemoryStorage(
-  fileName: string,
-  options: BaseOptions = {},
-): Promise<Options> {
-  const {
-    url,
-    readonly,
-  } = options
-  const sqliteModule = await SQLiteAsyncESMFactory(
-    url ? { locateFile: () => url } : undefined,
-  )
-  /// keep-sorted
-  return {
-    path: fileName.endsWith('.db') ? fileName : `${fileName}.db`,
-    readonly,
     sqliteModule,
     vfsFn: IDBBatchAtomicVFS.create,
+    vfsOptions,
+    ...rest,
   }
 }

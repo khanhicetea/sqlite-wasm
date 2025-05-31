@@ -1,36 +1,62 @@
+import type { Options } from 'tsup'
+
 import { copyFile } from 'node:fs/promises'
+
 import { defineConfig } from 'tsup'
 
-export default defineConfig({
-  clean: true,
+const commonOptions: Options = {
   entry: {
-    index: 'src/index.ts',
-    idb: 'src/vfs/idb.ts',
-    opfs: 'src/vfs/opfs.ts',
-    constant: 'src/constant.ts',
+    'index': 'src/index.ts',
+    'idb': 'src/vfs/idb.ts',
+    'idb-memory': 'src/vfs/idb-memory.ts',
+    'opfs': 'src/vfs/opfs.ts',
+    'fs-handle': 'src/vfs/fs-handle.ts',
+    'constant': 'src/constant.ts',
   },
   format: ['esm', 'cjs'],
-  dts: true,
   treeshake: true,
-  tsconfig: './tsconfig.json',
   noExternal: ['wa-sqlite'],
-  plugins: [
-    {
-      name: 'copy-wasm',
-      buildEnd() {
-        if (this.format === 'esm') {
-          Promise.all([
-            copyFile(
-              './wa-sqlite-fts5/wa-sqlite.wasm',
-              './dist/wa-sqlite.wasm',
-            ),
-            copyFile(
-              './wa-sqlite-fts5/wa-sqlite-async.wasm',
-              './dist/wa-sqlite-async.wasm',
-            ),
-          ])
-        }
-      },
+  tsconfig: './tsconfig.json',
+}
+
+export default defineConfig([
+  {
+    ...commonOptions,
+    clean: true,
+    dts: { resolve: true },
+  },
+  {
+    ...commonOptions,
+    minify: true,
+    splitting: false,
+    outExtension({ format }) {
+      return {
+        js: format === 'esm' ? `.min.js` : '.min.cjs',
+      }
     },
-  ],
-})
+    plugins: [
+      {
+        name: 'copy-wasm',
+        buildEnd() {
+          if (this.format === 'esm') {
+            Promise.all([
+              copyFile(
+                './wa-sqlite-fts5/wa-sqlite.wasm',
+                './dist/wa-sqlite.wasm',
+              ),
+              copyFile(
+                './wa-sqlite-fts5/wa-sqlite-async.wasm',
+                './dist/wa-sqlite-async.wasm',
+              ),
+              // Maybe uncomment later when jspi support is widely supported
+              // copyFile(
+              //   './wa-sqlite-fts5/wa-sqlite-jspi.wasm',
+              //   './dist/wa-sqlite-jspi.wasm',
+              // ),
+            ])
+          }
+        },
+      },
+    ],
+  },
+])

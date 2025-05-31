@@ -1,5 +1,17 @@
-import type { SQLiteDBCore } from './types'
-import { SQLITE_DETERMINISTIC, SQLITE_DIRECTONLY, SQLITE_UTF8 } from 'wa-sqlite'
+import type { BaseStorageOptions, SQLiteDBCore } from './types'
+
+import {
+  SQLITE_DETERMINISTIC,
+  SQLITE_DIRECTONLY,
+  SQLITE_OK,
+  SQLITE_OPEN_CREATE,
+  SQLITE_OPEN_READONLY,
+  SQLITE_OPEN_READWRITE,
+  SQLITE_UTF8,
+} from 'wa-sqlite'
+import { SQLITE_ROW } from 'wa-sqlite/src/sqlite-constants.js'
+
+import { importDatabase } from './io'
 
 /**
  * check if IndexedDB and Web Locks API supported
@@ -12,29 +24,38 @@ export function isIdbSupported(): boolean {
  * check if [OPFS SyncAccessHandle](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemSyncAccessHandle) supported
  */
 export async function isOpfsSupported(): Promise<boolean> {
-  // must call and test, see https://stackoverflow.com/questions/76113945/file-system-access-api-on-safari-ios-createsyncaccesshandle-unknownerror-i
-  const inner = async (): Promise<boolean> => {
-    const root = await navigator?.storage.getDirectory?.()
-    if (!root) {
-      return false
+  // must write file to test, see https://stackoverflow.com/questions/76113945/file-system-access-api-on-safari-ios-createsyncaccesshandle-unknownerror-i
+  const inner = (): Promise<boolean> => new Promise((resolve) => {
+    if (typeof navigator?.storage?.getDirectory !== 'function') {
+      resolve(false)
+      return
     }
-    try {
-      const handle = await root.getFileHandle('_CHECK', { create: true })
-      // @ts-expect-error check
-      const access = await handle.createSyncAccessHandle()
-      access.close()
-      return true
-    } catch {
-      return false
-    } finally {
-      await root.removeEntry('_CHECK')
-    }
-  }
+
+    navigator.storage.getDirectory()
+      .then((root) => {
+        if (!root) {
+          resolve(false)
+          return
+        }
+
+        root.getFileHandle('_CHECK', { create: true })
+          // @ts-expect-error no type
+          .then(handle => handle.createSyncAccessHandle())
+          .then(access => (access.close(), root.removeEntry('_CHECK')))
+          .then(() => resolve(true))
+          .catch(() => root.removeEntry('_CHECK')
+            .then(() => resolve(false))
+            .catch(() => resolve(false)),
+          )
+      })
+      .catch(() => resolve(false))
+  })
+
   if ('importScripts' in globalThis) {
-    return inner()
+    return await inner()
   }
   try {
-    if (typeof Worker === 'undefined') {
+    if (typeof Worker === 'undefined' || typeof Promise === 'undefined') {
       return false
     }
 
@@ -47,13 +68,8 @@ export async function isOpfsSupported(): Promise<boolean> {
     const worker = new Worker(url)
 
     const result = await new Promise<boolean>((resolve, reject) => {
-      worker.onmessage = ({ data }) => {
-        resolve(data)
-      }
-      worker.onerror = (err) => {
-        err.preventDefault()
-        reject(false)
-      }
+      worker.onmessage = ({ data }) => resolve(data)
+      worker.onerror = err => (err.preventDefault(), reject(false))
     })
 
     worker.terminate()
@@ -147,4 +163,118 @@ export function customFunctionCore<N extends string, T extends SQLiteCompatibleT
   } = {},
 ): void {
   return customFunction(core.sqlite, core.db, fnName, fn, options)
+}
+
+/**
+ * Parse options with existing database
+ * @param data database File or ReadableStream
+ * @param options extra options
+ * @example
+ * ```ts
+ * import { initSQLite, withExistDB } from '@subframe7536/sqlite-wasm'
+ * import { useIdbStorage } from '@subframe7536/sqlite-wasm/idb'
+ *
+ * const db = initSQLite(
+ *   useIdbStorage('test.db', withExistDB(FileOrReadableStream, { url }))
+ * )
+ * ```
+ */
+export function withExistDB<T extends BaseStorageOptions>(
+  data: File | ReadableStream,
+  options?: Omit<T, 'beforeOpen'>,
+): T {
+  return {
+    ...options,
+    beforeOpen: (vfs, path) => importDatabase(vfs, path, data),
+  } as T
+}
+
+export async function close(core: SQLiteDBCore): Promise<void> {
+  await core.sqlite.close(core.pointer)
+}
+
+export function changes(core: SQLiteDBCore): number | bigint {
+  return core.sqliteModule._sqlite3_changes(core.pointer)
+}
+
+export function lastInsertRowId(core: SQLiteDBCore): number | bigint {
+  return core.sqliteModule._sqlite3_last_insert_rowid(core.pointer)
+}
+
+export async function stream(
+  core: SQLiteDBCore,
+  onData: (data: Record<string, SQLiteCompatibleType>) => void,
+  sql: string,
+  parameters?: SQLiteCompatibleType[],
+): Promise<void> {
+  const { sqlite, pointer } = core
+  for await (const stmt of sqlite.statements(pointer, sql)) {
+    if (parameters?.length) {
+      sqlite.bind_collection(stmt, parameters)
+    }
+    const cols = sqlite.column_names(stmt)
+    while (await sqlite.step(stmt) === SQLITE_ROW) {
+      const row = sqlite.row(stmt)
+      onData(Object.fromEntries(cols.map((key, i) => [key, row[i]])))
+    }
+  }
+}
+
+export async function run(
+  core: SQLiteDBCore,
+  sql: string,
+  parameters?: SQLiteCompatibleType[],
+): Promise<Array<Record<string, SQLiteCompatibleType>>> {
+  const results: any[] = []
+  await stream(core, data => results.push(data), sql, parameters)
+  return results
+}
+
+export async function* iterator(
+  core: SQLiteDBCore,
+  sql: string,
+  parameters?: SQLiteCompatibleType[],
+  chunkSize = 1,
+): AsyncIterableIterator<Record<string, SQLiteCompatibleType>[]> {
+  const { sqlite, pointer } = core
+  // eslint-disable-next-line unicorn/no-new-array
+  let cache = new Array(chunkSize)
+  for await (const stmt of sqlite.statements(pointer, sql)) {
+    if (parameters?.length) {
+      sqlite.bind_collection(stmt, parameters)
+    }
+    let idx = 0
+    const cols = sqlite.column_names(stmt)
+    while (1) {
+      const result = await sqlite.step(stmt)
+      if (result === SQLITE_ROW) {
+        const row = sqlite.row(stmt)
+        cache[idx] = Object.fromEntries(cols.map((key, i) => [key, row[i]]))
+        if (++idx === chunkSize) {
+          yield cache.slice(0, idx)
+          idx = 0
+        }
+      } else if (result === SQLITE_OK) {
+        if (++idx === chunkSize) {
+          yield []
+        }
+      } else {
+        if (idx > 0) {
+          yield cache.slice(0, idx)
+        }
+        break
+      }
+    }
+  }
+  cache = undefined!
+}
+
+export function parseOpenV2Flag(readonly?: boolean): number {
+  return readonly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+}
+
+export async function reopen(core: SQLiteDBCore, readonly?: boolean): Promise<void> {
+  await close(core)
+  const newPointer = await core.sqlite.open_v2(core.path, parseOpenV2Flag(readonly))
+  core.pointer = newPointer
 }

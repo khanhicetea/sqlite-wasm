@@ -1,24 +1,39 @@
 import { uuidv7 } from 'uuidv7'
-// eslint-disable-next-line antfu/no-import-dist
-import url from '../../dist/wa-sqlite.wasm?url'
-import { customFunction, initSQLite, isOpfsSupported } from '../../src'
-import { useOpfsStorage } from '../../src/vfs/opfs'
-import { runSQLStream } from './runSQL'
 
-onmessage = async () => {
+import { customFunction, initSQLite, isOpfsSupported, withExistDB } from '../../src'
+import { useOpfsStorage } from '../../src/vfs/opfs'
+import url from '../../wa-sqlite-fts5/wa-sqlite.wasm?url'
+import { runIterator, runSQLStream } from './runSQL'
+
+onmessage = async ({ data }) => {
   if (!await isOpfsSupported()) {
     return
   }
-  const { run, stream, lastInsertRowId, changes, sqlite, db } = await initSQLite(useOpfsStorage(
-    'test',
-    { url },
-    // 'https://cdn.jsdelivr.net/gh/rhashimoto/wa-sqlite@v0.9.9/dist/wa-sqlite.wasm',
+  const db = await initSQLite(useOpfsStorage(
+    'test.db',
+    (data && data !== 'dl') ? withExistDB(data, { url }) : { url },
+    // { url },
   ))
-  await runSQLStream(run, stream, data => postMessage(data))
-  console.log(lastInsertRowId(), changes())
-  customFunction(sqlite, db, 'uuidv7', () => uuidv7())
+  if (data === 'dl') {
+    postMessage(await db.dump())
+    return
+  }
+  console.table({
+    sqlite: db.sqlite.libversion(),
+    sqliteModule: db.sqliteModule._sqlite3_libversion_number(),
+    sql: (await db.run('select sqlite_version() as a'))[0].a,
+  })
+  // if (data) {
+  //   await db.sync(data)
+  // }
+  await runSQLStream(db.run, db.stream, data => postMessage(data))
+  console.log(db.lastInsertRowId(), db.changes(), db.sqliteModule._sqlite3_changes64(db.pointer))
+  await runIterator(db)
+  console.log(db.lastInsertRowId(), db.changes(), db.sqliteModule._sqlite3_changes64(db.pointer))
+  customFunction(db.sqlite, db.pointer, 'uuidv7', () => uuidv7())
   console.log(
-    await run('select uuidv7() as a'),
+    'uuidv7():',
+    (await db.run('select uuidv7() as a'))[0].a,
   )
   postMessage('done')
 }
